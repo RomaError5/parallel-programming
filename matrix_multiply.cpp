@@ -107,10 +107,10 @@ int main(int argc, char* argv[]) {
     auto start = high_resolution_clock::now();
     auto C = multiplyMatrices(A, B);
     auto end = high_resolution_clock::now();
-    auto duration = duration_cast<milliseconds>(end - start).count() / 1000.0;
+	chrono::duration<double> duration = end - start;
 
     cout << fixed << setprecision(6);
-    cout << "Время выполнения: " << duration << " секунд" << endl;
+    cout << "Время выполнения: " << duration.count() << " секунд" << endl;
 
     // Запись результата
     cout << "Запись результата в " << fileC << " ..." << endl;
