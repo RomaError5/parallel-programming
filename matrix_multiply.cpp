@@ -1,9 +1,14 @@
 #include <iostream>
+#include <string>
 #include <fstream>
 #include <vector>
 #include <chrono>
 #include <iomanip>
 #include <cmath>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 using namespace std;
 using namespace chrono;
@@ -13,7 +18,7 @@ using namespace chrono;
 vector<vector<double>> readMatrix(const string& filename) {
     ifstream file(filename);
     if (!file.is_open()) {
-        cerr << "Ошибка: не удалось открыть файл " << filename << endl;
+        cerr << "Error: Failed to open file " << filename << endl;
         exit(1);
     }
     int n;
@@ -32,7 +37,7 @@ vector<vector<double>> readMatrix(const string& filename) {
 void writeMatrix(const string& filename, const vector<vector<double>>& mat) {
     ofstream file(filename);
     if (!file.is_open()) {
-        cerr << "Ошибка: не удалось создать файл " << filename << endl;
+        cerr << "Error: Failed to open file " << filename << endl;
         exit(1);
     }
     int n = mat.size();
@@ -47,11 +52,14 @@ void writeMatrix(const string& filename, const vector<vector<double>>& mat) {
     file.close();
 }
 
-// Последовательное перемножение двух квадратных матриц
+// Параллельное перемножение двух квадратных матриц с использованием OpenMP
 vector<vector<double>> multiplyMatrices(const vector<vector<double>>& A,
-    const vector<vector<double>>& B) {
+    const vector<vector<double>>& B, int numThreads) {
     int n = A.size();
     vector<vector<double>> C(n, vector<double>(n, 0.0));
+
+    // Распараллеливание внешнего цикла по строкам результирующей матрицы
+    #pragma omp parallel for
     for (int i = 0; i < n; ++i) {
         for (int k = 0; k < n; ++k) {
             double aik = A[i][k];
@@ -63,59 +71,48 @@ vector<vector<double>> multiplyMatrices(const vector<vector<double>>& A,
     return C;
 }
 
-// Вычисление объёма задачи (количество операций умножения и сложения)
-void printTaskVolume(int n) {
-    long long multOps = (long long)n * n * n;          // n^3 умножений
-    long long addOps = (long long)n * n * (n - 1);     // n^2*(n-1) сложений
-    long long totalOps = multOps + addOps;
-    long long memoryElements = 3LL * n * n;            // A, B, C – всего 3n^2 элементов
-    cout << "Объём задачи:" << endl;
-    cout << "  Размер матриц: " << n << " x " << n << endl;
-    cout << "  Количество элементов: " << memoryElements << " (входные + выходная)" << endl;
-    cout << "  Количество арифметических операций: " << totalOps << " (умножений: " << multOps << ", сложений: " << addOps << ")" << endl;
-}
-
 int main(int argc, char* argv[]) {
-    // Аргументы: program matrix1.txt matrix2.txt result.txt
-    if (argc != 4) {
-        cerr << "Использование: " << argv[0] << " <файл_матрицы_A> <файл_матрицы_B> <файл_результата>" << endl;
+    // Аргументы: A.txt B.txt result.txt [threads]
+    if (argc < 4 || argc > 5) {
+        cerr << "Using: " << argv[0] << " <filename_1.txt> <filename_2.txt> <result.txt> [number_threads]" << endl;
         return 1;
     }
 
     string fileA = argv[1];
     string fileB = argv[2];
     string fileC = argv[3];
+    int numThreads = (argc == 5) ? stoi(argv[4]) : 1;
 
     // Чтение матриц
-    cout << "Чтение матрицы A из " << fileA << " ..." << endl;
+    cout << "Open matrix A from " << fileA << " ..." << endl;
     auto A = readMatrix(fileA);
-    cout << "Чтение матрицы B из " << fileB << " ..." << endl;
+    cout << "Open matrix B from " << fileB << " ..." << endl;
     auto B = readMatrix(fileB);
 
     int n = A.size();
     if (n != B.size()) {
-        cerr << "Ошибка: матрицы разного размера!" << endl;
+        cerr << "Error: different size matrix!" << endl;
         return 1;
     }
-    cout << "Размер матриц: " << n << " x " << n << endl;
+    cout << "Matrix size: " << n << " x " << n << endl;
 
-    // Объём задачи
-    printTaskVolume(n);
+#ifdef _OPENMP
+    omp_set_num_threads(numThreads);
+#endif
 
-    // Умножение с замером времени
-    cout << "Выполняется умножение..." << endl;
     auto start = high_resolution_clock::now();
-    auto C = multiplyMatrices(A, B);
+    auto C = multiplyMatrices(A, B, numThreads);
     auto end = high_resolution_clock::now();
-	chrono::duration<double> duration = end - start;
+    chrono::duration<double> duration = end - start;
 
-    cout << fixed << setprecision(6);
-    cout << "Время выполнения: " << duration.count() << " секунд" << endl;
+    cout << "Matrix size (N): " << n << endl;
+    cout << "Execution time: " << duration.count() << " seconds" << endl;
+    cout << "Threads: " << numThreads << endl;
 
     // Запись результата
-    cout << "Запись результата в " << fileC << " ..." << endl;
+    cout << "Recording the result in " << fileC << " ..." << endl;
     writeMatrix(fileC, C);
 
-    cout << "Готово." << endl;
+    cout << "Ready" << endl;
     return 0;
 }
