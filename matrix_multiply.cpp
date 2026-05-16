@@ -15,7 +15,7 @@ using namespace chrono;
 
 // Чтение квадратной матрицы из файла
 // Формат: первая строка - размер n, затем n строк по n чисел
-vector<vector<double>> readMatrix(const string& filename) {
+vector<vector<int>> readMatrix(const string& filename) {
     ifstream file(filename);
     if (!file.is_open()) {
         cerr << "Error: Failed to open file " << filename << endl;
@@ -23,7 +23,7 @@ vector<vector<double>> readMatrix(const string& filename) {
     }
     int n;
     file >> n;
-    vector<vector<double>> mat(n, vector<double>(n));
+    vector<vector<int>> mat(n, vector<int>(n));
     for (int i = 0; i < n; ++i) {
         for (int j = 0; j < n; ++j) {
             file >> mat[i][j];
@@ -34,7 +34,7 @@ vector<vector<double>> readMatrix(const string& filename) {
 }
 
 // Запись квадратной матрицы в файл
-void writeMatrix(const string& filename, const vector<vector<double>>& mat) {
+void writeMatrix(const string& filename, const vector<vector<int>>& mat) {
     ofstream file(filename);
     if (!file.is_open()) {
         cerr << "Error: Failed to open file " << filename << endl;
@@ -53,19 +53,20 @@ void writeMatrix(const string& filename, const vector<vector<double>>& mat) {
 }
 
 // Параллельное перемножение двух квадратных матриц с использованием OpenMP
-vector<vector<double>> multiplyMatrices(const vector<vector<double>>& A,
-    const vector<vector<double>>& B, int numThreads) {
+vector<vector<int>> multiplyMatrices(const vector<vector<int>>& A,
+    const vector<vector<int>>& B, int numThreads) {
     int n = A.size();
-    vector<vector<double>> C(n, vector<double>(n, 0.0));
+    vector<vector<int>> C(n, vector<int>(n, 0.0));
 
     // Распараллеливание внешнего цикла по строкам результирующей матрицы
-    #pragma omp parallel for
+    #pragma omp parallel for default(none) shared(A, B, C, n)
     for (int i = 0; i < n; ++i) {
-        for (int k = 0; k < n; ++k) {
-            double aik = A[i][k];
-            for (int j = 0; j < n; ++j) {
-                C[i][j] += aik * B[k][j];
+        for (int j = 0; j < n; ++j) {
+            int sum = 0;
+            for (int k = 0; k < n; ++k) {
+                sum += A[i][k] * B[k][j];
             }
+            C[i][j] = sum;
         }
     }
     return C;
