@@ -14,7 +14,7 @@
 
 Все тесты проводились на процессоре 12th Gen Intel(R) Core(TM) i5-1235U.
 
-
+<img width="888" height="597" alt="CPU" src="https://github.com/user-attachments/assets/0e6e4fa9-bc51-4cdc-b6a0-601269ff620b" />
 
 ---
 ## Результаты экспериментов
@@ -33,6 +33,7 @@
 ---
 ## Графики
 
+<img width="1500" height="900" alt="time_plot" src="https://github.com/user-attachments/assets/85eaa426-b397-4d9a-b2dd-f9ce611f097e" />
 
 ---
 ## Итоги
