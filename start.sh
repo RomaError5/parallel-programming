@@ -17,7 +17,7 @@ echo -e "\nГенерируем матрицы..."
 python matrix_generate.py $MATRIX_SIZE
 
 #Компилируем код ручками через Developer Command Prompt
-#cl /O2 /openmp /EHsc matrix_multiply.cpp /Fe:matrix_multiply.exe
+#mpicxx -O3 -std=c++11 matrix_multiply.cpp -o matrix_multiply
 
 echo -e "\nПеремножаем матрицы..."
 ./matrix_multiply.exe A.txt B.txt result.txt $NUM_THREADS
