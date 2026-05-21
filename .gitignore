@@ -224,3 +224,4 @@ bin/
 obj/
 .pip/
 *.user
+/.vs
