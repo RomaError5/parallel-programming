@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="src/MatrixMultiply/MatrixMultiply.vcxproj" Id="cbe19922-0c88-4f1d-b44d-49c708d6978f" />
+</Solution>
