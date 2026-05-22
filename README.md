@@ -91,6 +91,7 @@
 ---
 ## Графики
 
+<img width="1000" height="600" alt="Figure_3" src="https://github.com/user-attachments/assets/788ecbce-f6e3-4a78-988b-de6886b536c1" />
 
 ---
 ## Итоги
