@@ -225,3 +225,4 @@ obj/
 .pip/
 *.user
 /.vs
+vcpkg_installed/
