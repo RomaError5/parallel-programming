@@ -51,16 +51,21 @@ void checkError(cl_int err, const string& msg) {
 
 // ---------- Основная функция ----------
 int main(int argc, char* argv[]) {
-    if (argc != 4 && argc != 5) {
-        cerr << "Usage: " << argv[0] << " A.txt B.txt result.txt [local_size]" << endl;
-        cerr << "  local_size - work-group size (e.g., 8, 16, 32), default 16" << endl;
+    if (argc < 4 || argc > 6) {
+        cerr << "Usage: " << argv[0] << " A.txt B.txt result.txt [block_cols [block_rows]]" << endl;
+        cerr << "  block_cols - work-group width (x-dimension), default 16" << endl;
+        cerr << "  block_rows - work-group height (y-dimension), default = block_cols" << endl;
         return 1;
     }
 
     string fileA = argv[1];
     string fileB = argv[2];
     string fileC = argv[3];
-    int local_size = (argc == 5) ? stoi(argv[4]) : 16;
+    int block_cols = 16, block_rows = 16;
+    if (argc >= 5) {
+        block_cols = stoi(argv[4]);
+        block_rows = (argc == 6) ? stoi(argv[5]) : block_cols;
+    }
 
     // --- Чтение матриц ---
     cout << "Reading A from " << fileA << " ..." << endl;
@@ -161,9 +166,32 @@ __kernel void matmul(__global const int* A, __global const int* B, __global int*
     clSetKernelArg(kernel, 2, sizeof(cl_mem), &d_C);
     clSetKernelArg(kernel, 3, sizeof(int), &n);
 
-    // --- Запуск ядра с измерением времени ---
-    size_t globalWorkSize[2] = { (size_t)n, (size_t)n };
-    size_t localWorkSize[2] = { (size_t)local_size, (size_t)local_size };
+    size_t max_work_group_size;
+    err = clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(max_work_group_size), &max_work_group_size, nullptr);
+    checkError(err, "clGetDeviceInfo max work group size");
+    cout << "Max work group size: " << max_work_group_size << endl;
+
+    // Корректировка блоков, если превышает лимит
+    int used_cols = block_cols, used_rows = block_rows;
+    if (used_cols * used_rows > (int)max_work_group_size) {
+        // Пытаемся сохранить соотношение сторон, уменьшая пропорционально
+        double ratio = (double)used_cols / used_rows;
+        int total = used_cols * used_rows;
+        int new_total = (int)max_work_group_size;
+        int new_cols = (int)sqrt(new_total * ratio);
+        int new_rows = new_total / new_cols;
+        if (new_cols * new_rows > new_total) new_cols--;
+        used_cols = new_cols;
+        used_rows = new_rows;
+        cout << "Warning: requested block size " << block_cols << "x" << block_rows
+             << " exceeds limit. Adjusted to " << used_cols << "x" << used_rows << endl;
+    }
+
+    size_t localWorkSize[2] = { (size_t)used_cols, (size_t)used_rows };
+    size_t globalWorkSize[2] = {
+        ((n + used_cols - 1) / used_cols) * used_cols,
+        ((n + used_rows - 1) / used_rows) * used_rows
+    };
 
     auto start = high_resolution_clock::now();
     err = clEnqueueNDRangeKernel(queue, kernel, 2, nullptr, globalWorkSize, localWorkSize, 0, nullptr, nullptr);
@@ -185,7 +213,7 @@ __kernel void matmul(__global const int* A, __global const int* B, __global int*
 
     cout << fixed << setprecision(6);
     cout << "Execution time (OpenCL kernel only): " << elapsed << " seconds" << endl;
-    cout << "Local work group size: " << local_size << " x " << local_size << endl;
+    cout << "Local work group size: " << used_cols << " x " << used_rows << endl;
 
     writeMatrix(fileC, C_host);
     cout << "Result saved to " << fileC << endl;

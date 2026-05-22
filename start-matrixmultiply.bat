@@ -1,10 +1,13 @@
 @echo off
 setlocal enabledelayedexpansion
 
-rem Использование: start-matrixmultiply.bat [число_процессов] [размер_матрицы]
-set BLOCK_SIZE=%1
-if "%BLOCK_SIZE%"=="" set BLOCK_SIZE=8
-set MATRIX_SIZE=%2
+rem Использование: start-matrixmultiply.bat [block_cols] [block_rows] [matrix_size]
+rem Пример: start-matrixmultiply.bat 32 16 800
+set BLOCK_COLS=%1
+if "%BLOCK_COLS%"=="" set BLOCK_COLS=16
+set BLOCK_ROWS=%2
+if "%BLOCK_ROWS%"=="" set BLOCK_ROWS=%BLOCK_COLS%
+set MATRIX_SIZE=%3
 if "%MATRIX_SIZE%"=="" set MATRIX_SIZE=200
 
 if not exist ".venv" (
@@ -25,8 +28,8 @@ echo Генерируем матрицы...
 python matrix_generate.py %MATRIX_SIZE%
 
 echo.
-echo Перемножаем матрицы...
-bin\x64\Debug\MatrixMultiply.exe A.txt B.txt result.txt %BLOCK_SIZE%
+echo Перемножаем матрицы с блоком %BLOCK_COLS%x%BLOCK_ROWS%......
+bin\x64\Debug\MatrixMultiply.exe A.txt B.txt result.txt %BLOCK_COLS% %BLOCK_ROWS%
 
 echo.
 echo Проверяем результат...
