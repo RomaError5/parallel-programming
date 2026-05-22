@@ -37,18 +37,6 @@ void writeMatrix(const string& filename, const Matrix& mat) {
     }
 }
 
-// ---------- Умножение матриц ----------
-Matrix sequentialMultiply(const Matrix& A,
-                                        const Matrix& B) {
-    int n = A.size();
-    Matrix C(n, vector<int>(n, 0));
-    for (int i = 0; i < n; ++i)
-        for (int k = 0; k < n; ++k)
-            for (int j = 0; j < n; ++j)
-                C[i][j] += A[i][k] * B[k][j];
-    return C;
-}
-
 // ---------- Главная функция MPI ----------
 int main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
