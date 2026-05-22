@@ -3,7 +3,11 @@
 #include <vector>
 #include <chrono>
 #include <iomanip>
-#include <mpi.h>
+#include <string>
+
+#define CL_TARGET_OPENCL_VERSION 300
+
+#include <CL/cl.h>
 
 using namespace std;
 using namespace chrono;
@@ -14,7 +18,7 @@ Matrix readMatrix(const string& filename) {
     ifstream file(filename);
     if (!file.is_open()) {
         cerr << "Error: Cannot open " << filename << endl;
-        MPI_Abort(MPI_COMM_WORLD, 1);
+        exit(1);
     }
     int n;
     file >> n;
@@ -28,162 +32,172 @@ Matrix readMatrix(const string& filename) {
 // ---------- Запись матрицы ----------
 void writeMatrix(const string& filename, const Matrix& mat) {
     ofstream file(filename);
-    int n = mat.size();
+    int n = (int)mat.size();
     file << n << endl;
     for (int i = 0; i < n; ++i) {
         for (int j = 0; j < n; ++j)
-            file << mat[i][j] << (j == n-1 ? "" : " ");
+            file << mat[i][j] << (j == n - 1 ? "" : " ");
         file << endl;
     }
 }
 
-// ---------- Главная функция MPI ----------
-int main(int argc, char* argv[]) {
-    MPI_Init(&argc, &argv);
-    int rank, size;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
+// ---------- Проверка ошибок OpenCL ----------
+void checkError(cl_int err, const string& msg) {
+    if (err != CL_SUCCESS) {
+        cerr << "OpenCL error: " << msg << " (code " << err << ")" << endl;
+        exit(1);
+    }
+}
 
-    if (argc < 4) {
-        if (rank == 0)
-            cerr << "Usage: mpirun -np N " << argv[0]
-                 << " A.txt B.txt result.txt" << endl;
-        MPI_Finalize();
+// ---------- Основная функция ----------
+int main(int argc, char* argv[]) {
+    if (argc != 4 && argc != 5) {
+        cerr << "Usage: " << argv[0] << " A.txt B.txt result.txt [local_size]" << endl;
+        cerr << "  local_size - work-group size (e.g., 8, 16, 32), default 16" << endl;
         return 1;
     }
 
     string fileA = argv[1];
     string fileB = argv[2];
     string fileC = argv[3];
+    int local_size = (argc == 5) ? stoi(argv[4]) : 16;
 
-    // Только процесс 0 читает матрицы и рассылает данные
-    int n = 0;
-    Matrix A, B;
-
-    if (rank == 0) {
-        A = readMatrix(fileA);
-        B = readMatrix(fileB);
-        n = A.size();
-        if (n != (int)B.size()) {
-            cerr << "Matrix size mismatch!" << endl;
-            MPI_Abort(MPI_COMM_WORLD, 1);
-        }
+    // --- Чтение матриц ---
+    cout << "Reading A from " << fileA << " ..." << endl;
+    auto A_host = readMatrix(fileA);
+    cout << "Reading B from " << fileB << " ..." << endl;
+    auto B_host = readMatrix(fileB);
+    int n = (int)A_host.size();
+    if (n != (int)B_host.size()) {
+        cerr << "Matrix size mismatch!" << endl;
+        return 1;
     }
+    cout << "Matrix size: " << n << " x " << n << endl;
 
-    // Широковещательная рассылка размера n всем процессам
-    MPI_Bcast(&n, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-    // Каждый процесс выделит место под свои строки A и полную B
-    // Распределение строк: процесс r получит строки от start до end-1
-    int rows_per_proc = n / size;
-    int remainder = n % size;
-    int start_row = rank * rows_per_proc + min(rank, remainder);
-    int end_row = start_row + rows_per_proc + (rank < remainder ? 1 : 0);
-    int local_rows = end_row - start_row;
-
-    // Вектор для локальной части A (local_rows x n)
-    vector<int> local_A(local_rows * n, 0);
-    // Вектор для всей матрицы B (n x n) – каждый процесс хранит её целиком
-    vector<int> B_flat(n * n, 0);
-    // Результат для локальных строк (local_rows x n)
-    vector<int> local_C(local_rows * n, 0);
-
-    // Процесс 0 рассылает B всем
-    if (rank == 0) {
-        for (int i = 0; i < n; ++i)
-            for (int j = 0; j < n; ++j)
-                B_flat[i * n + j] = B[i][j];
-    }
-    MPI_Bcast(B_flat.data(), n * n, MPI_INT, 0, MPI_COMM_WORLD);
-
-    // Рассылка строк A каждому процессу (векторный тип данных для строк)
-    // Подготовим описатель типа "строка матрицы A" для MPI
-    MPI_Datatype row_type;
-    MPI_Type_vector(n, 1, n, MPI_INT, &row_type);
-    MPI_Type_commit(&row_type);
-
-    if (rank == 0) {
-        // Отправляем каждому процессу его строки
-        for (int p = 0; p < size; ++p) {
-            int p_start = p * rows_per_proc + min(p, remainder);
-            int p_rows = rows_per_proc + (p < remainder ? 1 : 0);
-            if (p == 0) {
-                // копируем свои строки
-                for (int i = 0; i < local_rows; ++i)
-                    for (int j = 0; j < n; ++j)
-                        local_A[i * n + j] = A[p_start + i][j];
-            } else {
-                // отправляем строки процессу p
-                for (int i = 0; i < p_rows; ++i) {
-                    MPI_Send(A[p_start + i].data(), n, MPI_INT, p, i, MPI_COMM_WORLD);
-                }
-            }
-        }
-    } else {
-        // Приём строк
-        for (int i = 0; i < local_rows; ++i) {
-            MPI_Recv(&local_A[i * n], n, MPI_INT, 0, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        }
-    }
-
-    MPI_Type_free(&row_type);
-
-    // Локальное умножение: local_C = local_A * B
-    auto start_time = high_resolution_clock::now();
-
-    for (int i = 0; i < local_rows; ++i) {
+    // --- Подготовка данных: плоские векторы ---
+    vector<int> A_flat(n * n);
+    vector<int> B_flat(n * n);
+    for (int i = 0; i < n; ++i)
         for (int j = 0; j < n; ++j) {
-            int sum = 0;
-            for (int k = 0; k < n; ++k) {
-                sum += local_A[i * n + k] * B_flat[k * n + j];
-            }
-            local_C[i * n + j] = sum;
+            A_flat[i * n + j] = A_host[i][j];
+            B_flat[i * n + j] = B_host[i][j];
         }
+
+    // --- Инициализация OpenCL ---
+    cl_platform_id platform;
+    cl_device_id device;
+    cl_context context;
+    cl_command_queue queue;
+    cl_program program;
+    cl_kernel kernel;
+    cl_int err;
+
+    // Получаем первую платформу
+    err = clGetPlatformIDs(1, &platform, nullptr);
+    checkError(err, "clGetPlatformIDs");
+    // Получаем первое устройство (обычно Intel GPU, если есть)
+    err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, nullptr);
+    if (err == CL_DEVICE_NOT_FOUND) {
+        cerr << "No GPU device, falling back to CPU" << endl;
+        err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, 1, &device, nullptr);
+        checkError(err, "clGetDeviceIDs CPU");
     }
 
-    auto end_time = high_resolution_clock::now();
-    double elapsed = duration<double>(end_time - start_time).count();
+    // Выводим информацию об устройстве
+    char deviceName[256];
+    clGetDeviceInfo(device, CL_DEVICE_NAME, sizeof(deviceName), deviceName, nullptr);
+    cout << "Using device: " << deviceName << endl;
 
-    // Сбор результата на процессе 0
-    vector<int> global_C;
-    vector<int> recv_counts(size, 0);      // количество элементов от каждого процесса
-    vector<int> displs(size, 0);
+    context = clCreateContext(nullptr, 1, &device, nullptr, nullptr, &err);
+    checkError(err, "clCreateContext");
+    queue = clCreateCommandQueueWithProperties(context, device, nullptr, &err);
+    checkError(err, "clCreateCommandQueue");
 
-    if (rank == 0) {
-        global_C.resize(n * n);
-        // Вычисляем смещения для каждого процесса
-        int offset = 0;
-        for (int p = 0; p < size; ++p) {
-            int p_start = p * rows_per_proc + min(p, remainder);
-            int p_rows = rows_per_proc + (p < remainder ? 1 : 0);
-            recv_counts[p] = p_rows * n;
-            displs[p] = offset;
-            offset += recv_counts[p];
+    // --- Код ядра OpenCL (в виде строки) ---
+    const char* kernelSource = R"(
+__kernel void matmul(__global const int* A, __global const int* B, __global int* C, int n) {
+    int row = get_global_id(0);
+    int col = get_global_id(1);
+    if (row < n && col < n) {
+        int sum = 0;
+        for (int k = 0; k < n; ++k) {
+            sum += A[row * n + k] * B[k * n + col];
         }
+        C[row * n + col] = sum;
     }
+}
+)";
 
-    // Собираем все части C
-    MPI_Gatherv(local_C.data(), local_rows * n, MPI_INT,
-                global_C.data(), recv_counts.data(), displs.data(), MPI_INT,
-                0, MPI_COMM_WORLD);
-
-    if (rank == 0) {
-        // Преобразуем плоский вектор в матрицу для записи
-        Matrix C_mat(n, vector<int>(n));
-        for (int i = 0; i < n; ++i)
-            for (int j = 0; j < n; ++j)
-                C_mat[i][j] = global_C[i * n + j];
-
-        // Замер времени только для процесса 0 (общее время вычислений)
-        cout << fixed << setprecision(6);
-        cout << "Matrix size (N): " << n << endl;
-        cout << "Execution time: " << elapsed << " seconds" << endl;
-        cout << "MPI processes: " << size << endl;
-
-        writeMatrix(fileC, C_mat);
-        cout << "Result saved to " << fileC << endl;
+    // Создаём программу
+    program = clCreateProgramWithSource(context, 1, &kernelSource, nullptr, &err);
+    checkError(err, "clCreateProgramWithSource");
+    err = clBuildProgram(program, 1, &device, nullptr, nullptr, nullptr);
+    if (err != CL_SUCCESS) {
+        // Вывод лога ошибок
+        size_t logSize;
+        clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &logSize);
+        vector<char> log(logSize + 1);
+        clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, logSize, log.data(), nullptr);
+        cerr << "Build error: " << log.data() << endl;
+        exit(1);
     }
+    kernel = clCreateKernel(program, "matmul", &err);
+    checkError(err, "clCreateKernel");
 
-    MPI_Finalize();
+    // --- Выделение памяти на устройстве ---
+    cl_mem d_A = clCreateBuffer(context, CL_MEM_READ_ONLY, n * n * sizeof(int), nullptr, &err);
+    cl_mem d_B = clCreateBuffer(context, CL_MEM_READ_ONLY, n * n * sizeof(int), nullptr, &err);
+    cl_mem d_C = clCreateBuffer(context, CL_MEM_WRITE_ONLY, n * n * sizeof(int), nullptr, &err);
+    checkError(err, "clCreateBuffer");
+
+    // Копирование данных
+    err = clEnqueueWriteBuffer(queue, d_A, CL_TRUE, 0, n * n * sizeof(int), A_flat.data(), 0, nullptr, nullptr);
+    err |= clEnqueueWriteBuffer(queue, d_B, CL_TRUE, 0, n * n * sizeof(int), B_flat.data(), 0, nullptr, nullptr);
+    checkError(err, "clEnqueueWriteBuffer");
+
+    // Установка аргументов ядра
+    clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_A);
+    clSetKernelArg(kernel, 1, sizeof(cl_mem), &d_B);
+    clSetKernelArg(kernel, 2, sizeof(cl_mem), &d_C);
+    clSetKernelArg(kernel, 3, sizeof(int), &n);
+
+    // --- Запуск ядра с измерением времени ---
+    size_t globalWorkSize[2] = { (size_t)n, (size_t)n };
+    size_t localWorkSize[2] = { (size_t)local_size, (size_t)local_size };
+
+    auto start = high_resolution_clock::now();
+    err = clEnqueueNDRangeKernel(queue, kernel, 2, nullptr, globalWorkSize, localWorkSize, 0, nullptr, nullptr);
+    checkError(err, "clEnqueueNDRangeKernel");
+    clFinish(queue); // дождаться завершения
+    auto end = high_resolution_clock::now();
+    double elapsed = duration<double>(end - start).count();
+
+    // --- Чтение результата ---
+    vector<int> C_flat(n * n);
+    err = clEnqueueReadBuffer(queue, d_C, CL_TRUE, 0, n * n * sizeof(int), C_flat.data(), 0, nullptr, nullptr);
+    checkError(err, "clEnqueueReadBuffer");
+
+    // Преобразование обратно в матрицу
+    Matrix C_host(n, vector<int>(n));
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < n; ++j)
+            C_host[i][j] = C_flat[i * n + j];
+
+    cout << fixed << setprecision(6);
+    cout << "Execution time (OpenCL kernel only): " << elapsed << " seconds" << endl;
+    cout << "Local work group size: " << local_size << " x " << local_size << endl;
+
+    writeMatrix(fileC, C_host);
+    cout << "Result saved to " << fileC << endl;
+
+    // --- Освобождение ресурсов ---
+    clReleaseMemObject(d_A);
+    clReleaseMemObject(d_B);
+    clReleaseMemObject(d_C);
+    clReleaseKernel(kernel);
+    clReleaseProgram(program);
+    clReleaseCommandQueue(queue);
+    clReleaseContext(context);
+
     return 0;
 }
