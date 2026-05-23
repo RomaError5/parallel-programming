@@ -39,15 +39,14 @@ int main(int argc, char* argv[]) {
 
     if (argc != 3) {
         if (rank == 0) {
-            cerr << "Usage: mpirun -np N " << argv[0] << " <matrix_size> <result_file>" << endl;
-            cerr << "Example: mpirun -np 4 ./program 2000 result.txt" << endl;
+            cerr << "Usage: mpirun -np N " << argv[0] << " <matrix_size>" << endl;
+            cerr << "Example: mpirun -np 4 ./program 2000" << endl;
         }
         MPI_Finalize();
         return 1;
     }
 
     int n = atoi(argv[1]);
-    string resultFile = argv[2];
 
     // Процесс 0 генерирует матрицы A и B
     Matrix A, B;
@@ -152,9 +151,6 @@ int main(int argc, char* argv[]) {
         cout << "Matrix size: " << n << " x " << n << endl;
         cout << "Execution time: " << elapsed << " seconds" << endl;
         cout << "MPI processes: " << size << endl;
-
-        writeMatrix(resultFile, C_mat);
-        cout << "Result saved to " << resultFile << endl;
     }
 
     MPI_Finalize();
