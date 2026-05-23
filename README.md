@@ -32,6 +32,7 @@
 ---
 ## Графики
 
+<img width="1000" height="600" alt="Figure_4" src="https://github.com/user-attachments/assets/773964bd-52be-4ed7-a98c-14ebcfc0d1db" />
 
 ---
 ## Итоги
